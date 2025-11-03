@@ -230,10 +230,27 @@ def generate_pdf_cached_multithreaded(file_paths, watermark_path, start_page):
 # -------------------------
 # Streamlit UI
 # -------------------------
-uploaded_files = st.file_uploader(
-    "📄 Upload dine PDF-bilag",
-    accept_multiple_files=True, type="pdf"
-)
+uploaded_files = st.file_uploader("""
+### 📄 Upload dine PDF-bilag
+Upload dine **bilagsfiler** herunder.
+
+Appen genkender og sorterer automatisk filerne ud fra deres nummer og underdel, så dine bilag står i korrekt rækkefølge i den samlede PDF.
+
+Det er vigtigt, at filnavnene **starter med 'Bilag'** (eller 'bilag'), efterfulgt af tal, og eventuelt bogstaver og punktum.
+
+#### ✅ Eksempler på gyldige filnavne:
+- `Bilag 1 - Statisk system.pdf`  
+- `Bilag 3.1 - Etagedæk.pdf`   
+- `Bilag 4a - Vindlast.pdf`
+
+#### ⚠️ Undgå disse:
+- `bilag1.pdf` *(mangler mellemrum mellem 'Bilag' og tal)*
+- `Appendix 1.pdf` *(mangler "Bilag")*  
+- `BilagA.pdf` *(ingen tal før bogstav, kan give forkert sortering)*  
+
+Appen sorterer filerne **numerisk** (1, 2, 2.1, 2a, 3.2, 4b …), så dine bilag står i korrekt rækkefølge i den samlede PDF.
+""", accept_multiple_files=True, type="pdf")
+
 start_page = st.number_input("Start sidetal", min_value=1, value=2)
 watermark_path = os.path.join(os.path.dirname(__file__), "vandmærke.pdf")
 
