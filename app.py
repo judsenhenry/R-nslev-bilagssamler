@@ -1,25 +1,20 @@
 import streamlit as st
 import os
 import tempfile
-from io import BytesIO
 from PyPDF2 import PdfMerger, PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from copy import deepcopy
-import time
 
-# -------------------------
-# App config
-# -------------------------
 st.set_page_config(page_title="Rønslev Bilagssamler", layout="centered")
 st.title("📘 Rønslevs Bilagssamler")
 
 # -------------------------
-# Systemstyring (for stabilitet ved mange brugere)
+# Køsystem
 # -------------------------
-MAX_USERS = 3  # maks. samtidige brugere
+MAX_USERS = 3
 if "active_users" not in st.session_state:
     st.session_state.active_users = 0
 
@@ -30,14 +25,13 @@ if st.session_state.active_users >= MAX_USERS:
 st.session_state.active_users += 1
 
 # -------------------------
-# Hjælpefunktioner (PDF)
+# Hjælpefunktioner (disk-baseret)
 # -------------------------
 
-def add_watermark_bytes(input_pdf_bytes, watermark_pdf_path):
-    watermark_reader = PdfReader(watermark_pdf_path)
+def add_watermark_to_file(input_path, watermark_path, output_path):
+    pdf_reader = PdfReader(input_path)
+    watermark_reader = PdfReader(watermark_path)
     watermark = watermark_reader.pages[0]
-
-    pdf_reader = PdfReader(BytesIO(input_pdf_bytes))
     pdf_writer = PdfWriter()
 
     for page in pdf_reader.pages:
@@ -45,15 +39,12 @@ def add_watermark_bytes(input_pdf_bytes, watermark_pdf_path):
         new_page.merge_page(page)
         pdf_writer.add_page(new_page)
 
-    output_pdf = BytesIO()
-    pdf_writer.write(output_pdf)
-    return output_pdf.getvalue()
+    with open(output_path, "wb") as f:
+        pdf_writer.write(f)
 
-
-def create_simple_pdf_bytes(content, font='Times-Roman', font_size=18, title_x=100, title_y=800):
+def create_simple_pdf_file(content, output_path, font='Times-Roman', font_size=18, title_x=100, title_y=800):
     width, height = A4
-    packet = BytesIO()
-    can = canvas.Canvas(packet, pagesize=A4)
+    can = canvas.Canvas(output_path, pagesize=A4)
     can.setFont(font, font_size)
 
     side_label_x = 400
@@ -79,14 +70,9 @@ def create_simple_pdf_bytes(content, font='Times-Roman', font_size=18, title_x=1
 
     can.showPage()
     can.save()
-    packet.seek(0)
-    return packet.getvalue()
 
-
-def create_table_of_contents_bytes(titles, page_ranges):
-    packet = BytesIO()
-    can = canvas.Canvas(packet, pagesize=A4)
-
+def create_table_of_contents_file(titles, page_ranges, output_path):
+    can = canvas.Canvas(output_path, pagesize=A4)
     can.setFont('Times-Bold', 18)
     can.drawString(100, 800, "Indholdsfortegnelse")
     can.setFont('Times-Roman', 12)
@@ -107,7 +93,6 @@ def create_table_of_contents_bytes(titles, page_ranges):
 
     for i, (title, (start, end)) in enumerate(zip(titles, page_ranges), 1):
         prefix = f"{i}."
-
         words = title.split()
         lines = []
         current_line = ""
@@ -132,10 +117,8 @@ def create_table_of_contents_bytes(titles, page_ranges):
         can.setFont(font_name, font_size)
         can.setFillColor(colors.black)
         can.drawString(num_x, first_line_y, prefix)
-
         for li, line in enumerate(lines):
             can.drawString(title_x, y_pos - li * line_height, line)
-
         can.setFillColor(colors.black)
         can.drawString(side_label_x, first_line_y, "Side")
 
@@ -149,51 +132,17 @@ def create_table_of_contents_bytes(titles, page_ranges):
         y_pos = first_line_y - needed_height - (line_height * 0.2)
 
     can.save()
-    packet.seek(0)
-    return packet.getvalue()
 
-
-def merge_pdfs_with_structure_bytes(pdf_files, watermark_pdf, start_page):
-    merger = PdfMerger()
-    titles = [os.path.splitext(os.path.basename(f))[0] for f in pdf_files]
-
-    page_ranges = []
-    current_page = start_page
-
-    dummy_toc_bytes = create_table_of_contents_bytes(titles, [(0, 0)] * len(pdf_files))
-    dummy_reader = PdfReader(BytesIO(dummy_toc_bytes))
-    toc_pages = len(dummy_reader.pages)
-    current_page += toc_pages
-
-    for pdf in pdf_files:
-        front_page = 1
-        num_pages = len(PdfReader(pdf).pages)
-        page_ranges.append((current_page, current_page + front_page + num_pages - 1))
-        current_page += front_page + num_pages
-
-    toc_bytes = create_table_of_contents_bytes(titles, page_ranges)
-    toc_watermarked = add_watermark_bytes(toc_bytes, watermark_pdf)
-    merger.append(BytesIO(toc_watermarked))
-
-    for title, pdf in zip(titles, pdf_files):
-        front_bytes = create_simple_pdf_bytes(title)
-        front_watermarked = add_watermark_bytes(front_bytes, watermark_pdf)
-        merger.append(BytesIO(front_watermarked))
-        merger.append(pdf)
-
-    output = BytesIO()
-    merger.write(output)
-    return output.getvalue()
-
-
-def add_page_numbers_bytes(input_pdf_bytes, start_page, bottom_margin=30):
-    pdf_reader = PdfReader(BytesIO(input_pdf_bytes))
+def add_page_numbers_file(input_path, start_page):
+    pdf_reader = PdfReader(input_path)
     num_pages = len(pdf_reader.pages)
+    output_path = input_path.replace(".pdf", "_numbered.pdf")
+    packet_path = input_path.replace(".pdf", "_numbers.pdf")
 
-    packet = BytesIO()
-    can = canvas.Canvas(packet)
+    can = canvas.Canvas(packet_path)
     font_name = 'Times-Bold'
     font_size = 12
+    bottom_margin = 30
 
     for i in range(num_pages):
         page = pdf_reader.pages[i]
@@ -211,52 +160,70 @@ def add_page_numbers_bytes(input_pdf_bytes, start_page, bottom_margin=30):
         can.setFillColor(colors.blue)
         can.drawString(x, y, text)
         can.showPage()
-
     can.save()
-    packet.seek(0)
-    numbering_pdf = PdfReader(packet)
+
+    numbering_pdf = PdfReader(packet_path)
     pdf_writer = PdfWriter()
     for page, num_page in zip(pdf_reader.pages, numbering_pdf.pages):
         page.merge_page(num_page)
         pdf_writer.add_page(page)
 
-    output = BytesIO()
-    pdf_writer.write(output)
-    return output.getvalue()
+    with open(output_path, "wb") as f:
+        pdf_writer.write(f)
+    return output_path
+
+def merge_pdfs_disk(pdf_files, watermark_path, start_page, output_path):
+    merger = PdfMerger()
+    titles = [os.path.splitext(os.path.basename(f))[0] for f in pdf_files]
+    page_ranges = []
+    current_page = start_page
+
+    # Dummy TOC for beregning
+    dummy_toc_path = os.path.join(tempfile.gettempdir(), "dummy_toc.pdf")
+    create_table_of_contents_file(titles, [(0, 0)]*len(pdf_files), dummy_toc_path)
+    dummy_reader = PdfReader(dummy_toc_path)
+    toc_pages = len(dummy_reader.pages)
+    current_page += toc_pages
+
+    for pdf in pdf_files:
+        front_page = 1
+        num_pages = len(PdfReader(pdf).pages)
+        page_ranges.append((current_page, current_page + front_page + num_pages - 1))
+        current_page += front_page + num_pages
+
+    # TOC med rigtige sider
+    toc_path = os.path.join(tempfile.gettempdir(), "toc.pdf")
+    create_table_of_contents_file(titles, page_ranges, toc_path)
+    toc_watermarked = os.path.join(tempfile.gettempdir(), "toc_watermarked.pdf")
+    add_watermark_to_file(toc_path, watermark_path, toc_watermarked)
+    merger.append(toc_watermarked)
+
+    # Forsider + bilag
+    for title, pdf in zip(titles, pdf_files):
+        front_path = os.path.join(tempfile.gettempdir(), f"front_{title}.pdf")
+        create_simple_pdf_file(title, front_path)
+        front_watermarked = os.path.join(tempfile.gettempdir(), f"front_{title}_wm.pdf")
+        add_watermark_to_file(front_path, watermark_path, front_watermarked)
+        merger.append(front_watermarked)
+        merger.append(pdf)
+
+    # Merge alle til output
+    with open(output_path, "wb") as f:
+        merger.write(f)
+    return output_path
 
 # -------------------------
-# Streamlit App UI & flow
+# Streamlit UI
 # -------------------------
-
-uploaded_files = st.file_uploader("""
-### 📄 Upload dine PDF-bilag
-Upload dine **bilagsfiler** herunder.
-
-Appen genkender og sorterer automatisk filerne ud fra deres nummer og underdel, så dine bilag står i korrekt rækkefølge i den samlede PDF.
-
-Det er vigtigt, at filnavnene **starter med 'Bilag'** (eller 'bilag'), efterfulgt af tal, og eventuelt bogstaver og punktum.
-
-#### ✅ Eksempler på gyldige filnavne:
-- `Bilag 1 - Statisk system.pdf`  
-- `Bilag 3.1 - Etagedæk.pdf`   
-- `Bilag 4a - Vindlast.pdf`
-
-#### ⚠️ Undgå disse:
-- `bilag1.pdf` *(mangler mellemrum mellem 'Bilag' og tal)*
-- `Appendix 1.pdf` *(mangler "Bilag")*  
-- `BilagA.pdf` *(ingen tal før bogstav, kan give forkert sortering)*  
-
-Appen sorterer filerne **numerisk** (1, 2, 2.1, 2a, 3.2, 4b …), så dine bilag står i korrekt rækkefølge i den samlede PDF.
-""", accept_multiple_files=True, type="pdf")
-
+uploaded_files = st.file_uploader(
+    "📄 Upload dine PDF-bilag",
+    accept_multiple_files=True, type="pdf"
+)
 start_page = st.number_input("Start sidetal", min_value=1, value=2)
-
-# Find vandmærket i projektmappen
 watermark_path = os.path.join(os.path.dirname(__file__), "vandmærke.pdf")
 
 st.sidebar.header("📈 Serverstatus")
 st.sidebar.write(f"Aktive brugere: {st.session_state.active_users} / {MAX_USERS}")
-st.sidebar.write(f"Cache: aktiveret for genererede filer (hvis samme input bruges flere gange)")
 
 if st.button("Generer PDF"):
     if not uploaded_files:
@@ -265,25 +232,24 @@ if st.button("Generer PDF"):
         st.error("Filen 'vandmærke.pdf' blev ikke fundet i projektmappen!")
     else:
         with st.spinner("Genererer PDF..."):
-            # Brug TemporaryDirectory så filerne slettes automatisk
             with tempfile.TemporaryDirectory() as tmpdirname:
                 temp_files = []
                 for uf in uploaded_files:
-                    temp_path = os.path.join(tmpdirname, uf.name)
-                    with open(temp_path, "wb") as f:
+                    path = os.path.join(tmpdirname, uf.name)
+                    with open(path, "wb") as f:
                         f.write(uf.read())
-                    temp_files.append(temp_path)
+                    temp_files.append(path)
 
-                merged_bytes = merge_pdfs_with_structure_bytes(temp_files, watermark_path, start_page)
-                numbered_bytes = add_page_numbers_bytes(merged_bytes, start_page)
+                output_path = os.path.join(tmpdirname, "samlet_bilag.pdf")
+                merged_path = merge_pdfs_disk(temp_files, watermark_path, start_page, output_path)
+                numbered_path = add_page_numbers_file(merged_path, start_page)
 
-                st.success("✅ PDF'er blev succesfuldt genereret!")
-                st.download_button(
-                    "⬇️ Download samlet PDF",
-                    BytesIO(numbered_bytes),
-                    file_name="samlet_bilag_med_indholdsfortegnelse.pdf",
-                    mime="application/pdf"
-                )
+                with open(numbered_path, "rb") as f:
+                    st.download_button(
+                        "⬇️ Download samlet PDF",
+                        f,
+                        file_name="samlet_bilag_med_indholdsfortegnelse.pdf",
+                        mime="application/pdf"
+                    )
 
-# Når brugeren forlader siden, frigøres plads i køen
 st.session_state.active_users -= 1
