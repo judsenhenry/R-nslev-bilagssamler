@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import tempfile
+import hashlib
 from PyPDF2 import PdfMerger, PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
@@ -24,9 +25,19 @@ if st.session_state.active_users >= MAX_USERS:
 
 st.session_state.active_users += 1
 
+st.sidebar.header("📈 Serverstatus")
+st.sidebar.write(f"Aktive brugere: {st.session_state.active_users} / {MAX_USERS}")
+
 # -------------------------
-# Hjælpefunktioner (disk-baseret)
+# Hjælpefunktioner
 # -------------------------
+def hash_files(file_paths):
+    """Lav en simpel hash baseret på filnavn og størrelse"""
+    h = hashlib.sha256()
+    for f in file_paths:
+        h.update(f.encode())
+        h.update(str(os.path.getsize(f)).encode())
+    return h.hexdigest()
 
 def add_watermark_to_file(input_path, watermark_path, output_path):
     pdf_reader = PdfReader(input_path)
@@ -207,23 +218,45 @@ def merge_pdfs_disk(pdf_files, watermark_path, start_page, output_path):
         merger.append(front_watermarked)
         merger.append(pdf)
 
-    # Merge alle til output
     with open(output_path, "wb") as f:
         merger.write(f)
     return output_path
 
 # -------------------------
+# Cached generation
+# -------------------------
+@st.cache_data(show_spinner=False)
+def generate_pdf_cached(file_paths, watermark_path, start_page):
+    output_path = os.path.join(tempfile.gettempdir(), f"cached_{hash_files(file_paths)}.pdf")
+    merged_path = merge_pdfs_disk(file_paths, watermark_path, start_page, output_path)
+    numbered_path = add_page_numbers_file(merged_path, start_page)
+    return numbered_path
+
+# -------------------------
 # Streamlit UI
 # -------------------------
-uploaded_files = st.file_uploader(
-    "📄 Upload dine PDF-bilag",
-    accept_multiple_files=True, type="pdf"
-)
+uploaded_files = st.file_uploader("""
+### 📄 Upload dine PDF-bilag
+Upload dine **bilagsfiler** herunder.
+
+Appen genkender og sorterer automatisk filerne ud fra deres nummer og underdel, så dine bilag står i korrekt rækkefølge i den samlede PDF.
+
+Det er vigtigt, at filnavnene **starter med 'Bilag'** (eller 'bilag'), efterfulgt af tal, og eventuelt bogstaver og punktum.
+
+#### ✅ Eksempler på gyldige filnavne:
+- `Bilag 1 - Statisk system.pdf`  
+- `Bilag 3.1 - Etagedæk.pdf`   
+- `Bilag 4a - Vindlast.pdf`
+
+#### ⚠️ Undgå disse:
+- `bilag1.pdf` *(mangler mellemrum mellem 'Bilag' og tal)*
+- `Appendix 1.pdf` *(mangler "Bilag")*  
+- `BilagA.pdf` *(ingen tal før bogstav, kan give forkert sortering)*  
+
+Appen sorterer filerne **numerisk** (1, 2, 2.1, 2a, 3.2, 4b …), så dine bilag står i korrekt rækkefølge i den samlede PDF.
+""", accept_multiple_files=True, type="pdf")
 start_page = st.number_input("Start sidetal", min_value=1, value=2)
 watermark_path = os.path.join(os.path.dirname(__file__), "vandmærke.pdf")
-
-st.sidebar.header("📈 Serverstatus")
-st.sidebar.write(f"Aktive brugere: {st.session_state.active_users} / {MAX_USERS}")
 
 if st.button("Generer PDF"):
     if not uploaded_files:
@@ -240,9 +273,7 @@ if st.button("Generer PDF"):
                         f.write(uf.read())
                     temp_files.append(path)
 
-                output_path = os.path.join(tmpdirname, "samlet_bilag.pdf")
-                merged_path = merge_pdfs_disk(temp_files, watermark_path, start_page, output_path)
-                numbered_path = add_page_numbers_file(merged_path, start_page)
+                numbered_path = generate_pdf_cached(temp_files, watermark_path, start_page)
 
                 with open(numbered_path, "rb") as f:
                     st.download_button(
