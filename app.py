@@ -151,7 +151,7 @@ def merge_pdfs_multithreaded(pdf_files, watermark_path, start_page, output_path)
     page_ranges = []
     current_page = start_page
 
-    # Dummy TOC for beregning
+    # Dummy TOC
     dummy_toc_path = os.path.join(tempfile.gettempdir(), "dummy_toc.pdf")
     create_table_of_contents_file(titles, [(0, 0)]*len(pdf_files), dummy_toc_path)
     dummy_reader = PdfReader(dummy_toc_path)
@@ -168,35 +168,13 @@ def merge_pdfs_multithreaded(pdf_files, watermark_path, start_page, output_path)
     toc_path = os.path.join(tempfile.gettempdir(), "toc.pdf")
     create_table_of_contents_file(titles, page_ranges, toc_path)
 
-    # TOC med vandmærke + sidetal
+    # TOC med vandmærke
     watermark_reader = PdfReader(watermark_path)
     watermark = watermark_reader.pages[0]
     toc_reader = PdfReader(toc_path)
     toc_writer = PdfWriter()
     for i, page in enumerate(toc_reader.pages):
-        page_num = start_page + i
-        new_page = deepcopy(watermark)
-        new_page.merge_page(page)
-        llx, lly, urx, ury = map(float, [new_page.mediabox.lower_left[0], new_page.mediabox.lower_left[1],
-                                         new_page.mediabox.upper_right[0], new_page.mediabox.upper_right[1]])
-        width = urx - llx
-        height = ury - lly
-        can_path = os.path.join(tempfile.gettempdir(), f"toc_num_{i}.pdf")
-        can = canvas.Canvas(can_path, pagesize=(width, height))
-        font_name = 'Times-Bold'
-        font_size = 12
-        bottom_margin = 30
-        text = str(page_num)
-        text_width = pdfmetrics.stringWidth(text, font_name, font_size)
-        x = (width - text_width)/2
-        y = bottom_margin
-        can.setFont(font_name, font_size)
-        can.setFillColor(colors.blue)
-        can.drawString(x, y, text)
-        can.showPage()
-        can.save()
-        num_reader = PdfReader(can_path)
-        new_page.merge_page(num_reader.pages[0])
+        new_page = add_watermark(page, watermark)
         toc_writer.add_page(new_page)
     toc_final = os.path.join(tempfile.gettempdir(), "toc_final.pdf")
     with open(toc_final, "wb") as f:
@@ -213,9 +191,54 @@ def merge_pdfs_multithreaded(pdf_files, watermark_path, start_page, output_path)
             merger.append(front_wm_path)
             merger.append(pdf_path)
 
-    # Output samlet PDF
+    # Gem midlertidig samlet PDF
     with open(output_path, "wb") as f:
         merger.write(f)
+
+    # -------------------------
+    # Tilføj sidetal på ALLE sider
+    # -------------------------
+    final_path = add_page_numbers_to_merged(output_path, start_page)
+    return final_path
+
+# -------------------------
+# Tilføj sidetal på alle sider
+# -------------------------
+def add_page_numbers_to_merged(merged_path, start_page):
+    pdf_reader = PdfReader(merged_path)
+    pdf_writer = PdfWriter()
+    num_pages = len(pdf_reader.pages)
+
+    for i, page in enumerate(pdf_reader.pages):
+        llx, lly, urx, ury = map(float, [
+            page.mediabox.lower_left[0],
+            page.mediabox.lower_left[1],
+            page.mediabox.upper_right[0],
+            page.mediabox.upper_right[1]
+        ])
+        width = urx - llx
+        height = ury - lly
+        packet_path = os.path.join(tempfile.gettempdir(), f"num_page_{i}.pdf")
+        can = canvas.Canvas(packet_path, pagesize=(width, height))
+        font_name = 'Times-Bold'
+        font_size = 12
+        bottom_margin = 30
+        text = str(start_page + i)
+        text_width = pdfmetrics.stringWidth(text, font_name, font_size)
+        x = (width - text_width)/2
+        y = bottom_margin
+        can.setFont(font_name, font_size)
+        can.setFillColor(colors.blue)
+        can.drawString(x, y, text)
+        can.showPage()
+        can.save()
+        num_reader = PdfReader(packet_path)
+        page.merge_page(num_reader.pages[0])
+        pdf_writer.add_page(page)
+
+    output_path = os.path.join(tempfile.gettempdir(), "final_numbered.pdf")
+    with open(output_path, "wb") as f:
+        pdf_writer.write(f)
     return output_path
 
 # -------------------------
@@ -268,8 +291,8 @@ if st.button("Generer PDF"):
                     with open(path, "wb") as f:
                         f.write(uf.read())
                     temp_files.append(path)
-                numbered_path = generate_pdf_cached_multithreaded(temp_files, watermark_path, start_page)
-                with open(numbered_path, "rb") as f:
+                final_path = generate_pdf_cached_multithreaded(temp_files, watermark_path, start_page)
+                with open(final_path, "rb") as f:
                     st.download_button(
                         "⬇️ Download samlet PDF",
                         f,
