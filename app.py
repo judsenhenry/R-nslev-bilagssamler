@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import tempfile
 from io import BytesIO
 from PyPDF2 import PdfMerger, PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
@@ -223,30 +224,15 @@ def add_page_numbers_bytes(input_pdf_bytes, start_page, bottom_margin=30):
     pdf_writer.write(output)
     return output.getvalue()
 
-
 # -------------------------
 # Streamlit App UI & flow
 # -------------------------
+
 uploaded_files = st.file_uploader(
     """
 ### 📄 Upload dine PDF-bilag
 Upload dine **bilagsfiler** herunder.
-
-Appen genkender og sorterer automatisk filerne ud fra deres nummer og underdel, så dine bilag står i korrekt rækkefølge i den samlede PDF.
-
-Det er vigtigt, at filnavnene **starter med 'Bilag'** (eller 'bilag'), efterfulgt af tal, og eventuelt bogstaver og punktum.
-
-#### ✅ Eksempler på gyldige filnavne:
-- `Bilag 1 - Statisk system.pdf`  
-- `Bilag 3.1 - Etagedæk.pdf`   
-- `Bilag 4a - Vindlast.pdf`
-
-#### ⚠️ Undgå disse:
-- `bilag1.pdf` *(mangler mellemrum mellem 'Bilag' og tal)*
-- `Appendix 1.pdf` *(mangler "Bilag")*  
-- `BilagA.pdf` *(ingen tal før bogstav, kan give forkert sortering)*  
-
-Appen sorterer filerne **numerisk** (1, 2, 2.1, 2a, 3.2, 4b …), så dine bilag står i korrekt rækkefølge i den samlede PDF.
+Appen genkender og sorterer automatisk filerne ud fra deres nummer og underdel.
 """,
     accept_multiple_files=True, type="pdf"
 )
@@ -267,24 +253,25 @@ if st.button("Generer PDF"):
         st.error("Filen 'vandmærke.pdf' blev ikke fundet i projektmappen!")
     else:
         with st.spinner("Genererer PDF..."):
-            temp_files = []
-            for uf in uploaded_files:
-                path = f"/tmp/{uf.name}"
-                with open(path, "wb") as f:
-                    f.write(uf.read())
-                temp_files.append(path)
+            # Brug TemporaryDirectory så filerne slettes automatisk
+            with tempfile.TemporaryDirectory() as tmpdirname:
+                temp_files = []
+                for uf in uploaded_files:
+                    temp_path = os.path.join(tmpdirname, uf.name)
+                    with open(temp_path, "wb") as f:
+                        f.write(uf.read())
+                    temp_files.append(temp_path)
 
-            # Brug cached-funktioner der returnerer bytes
-            merged_bytes = merge_pdfs_with_structure_bytes(temp_files, watermark_path, start_page)
-            numbered_bytes = add_page_numbers_bytes(merged_bytes, start_page)
+                merged_bytes = merge_pdfs_with_structure_bytes(temp_files, watermark_path, start_page)
+                numbered_bytes = add_page_numbers_bytes(merged_bytes, start_page)
 
-            st.success("✅ PDF'er blev succesfuldt genereret!")
-            st.download_button(
-                "⬇️ Download samlet PDF",
-                BytesIO(numbered_bytes),
-                file_name="samlet_bilag_med_indholdsfortegnelse.pdf",
-                mime="application/pdf"
-            )
+                st.success("✅ PDF'er blev succesfuldt genereret!")
+                st.download_button(
+                    "⬇️ Download samlet PDF",
+                    BytesIO(numbered_bytes),
+                    file_name="samlet_bilag_med_indholdsfortegnelse.pdf",
+                    mime="application/pdf"
+                )
 
 # Når brugeren forlader siden, frigøres plads i køen
 st.session_state.active_users -= 1
